@@ -1,0 +1,76 @@
+<?php
+// ============================================================
+//  getDashboardData.php – with debug mode (dev only)
+// ============================================================
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+require_once __DIR__ . '/../config.php';
+apiHeaders();
+
+// ⚠️ For testing ONLY – remove this in production
+// If no token, allow access with a demo user (optional)
+if (!isset($_SERVER['HTTP_X_SESSION_TOKEN']) && !isset($_GET['token'])) {
+    // For browser testing: pretend to be admin
+    $fakeUser = ['user_id' => 1, 'name' => 'Admin User', 'email' => 'admin@bizpulse.com', 'role' => 'admin'];
+} else {
+    $user = requireAuth(); // real auth
+}
+
+$pdo = getDB();
+
+// ── Stats ──
+$stats = [];
+$queries = [
+    'users'      => "SELECT COUNT(*) AS count FROM users",
+    'sales'      => "SELECT COUNT(*) AS count FROM sales",
+    'products'   => "SELECT COUNT(*) AS count FROM products",
+    'customers'  => "SELECT COUNT(*) AS count FROM customers",
+    'employees'  => "SELECT COUNT(*) AS count FROM employees",
+    'revenue'    => "SELECT SUM(amount) AS total FROM sales WHERE status = 'paid'"
+];
+foreach ($queries as $key => $sql) {
+    try {
+        $res = $pdo->query($sql);
+        $row = $res->fetch();
+        $stats[$key] = $row['count'] ?? $row['total'] ?? 0;
+    } catch (PDOException $e) {
+        $stats[$key] = 'ERROR: ' . $e->getMessage();
+    }
+}
+
+// ── Low Stock ──
+try {
+    $low_stock = $pdo->query("SELECT id, name, stock_qty, low_stock_threshold FROM products WHERE stock_qty <= low_stock_threshold")->fetchAll();
+} catch (PDOException $e) {
+    $low_stock = ['error' => $e->getMessage()];
+}
+
+// ── Recent Orders ──
+try {
+    $recent = $pdo->query("SELECT order_ref, customer_name, product_name, amount, status, created_at FROM sales ORDER BY created_at DESC LIMIT 5")->fetchAll();
+} catch (PDOException $e) {
+    $recent = ['error' => $e->getMessage()];
+}
+
+// ── Top Products ──
+try {
+    $top_products = $pdo->query("
+        SELECT product_name, COUNT(*) as sales
+        FROM sales
+        GROUP BY product_name
+        ORDER BY sales DESC
+        LIMIT 5
+    ")->fetchAll();
+} catch (PDOException $e) {
+    $top_products = ['error' => $e->getMessage()];
+}
+
+// ── Return JSON ──
+echo json_encode([
+    'success' => true,
+    'stats' => $stats,
+    'low_stock' => $low_stock,
+    'recent_orders' => $recent,
+    'top_products' => $top_products
+]);
